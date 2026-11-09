@@ -72,26 +72,40 @@ class MovieLensPackingSorter(BatchedLLMSorter):
         round_id: int,
         payload: Optional[Dict[str, object]] = None,
     ) -> List[str]:
+        """One listwise call, re-asked up to five attempts until every movie id is listed;
+        ids still missing after that are appended in presentation order."""
         prompt = self._build_prompt(presentation, round_id, payload or {})
-        response = robust_chat_completion(
-            self.client,
-            self.model,
-            ML_SYSTEM,
-            prompt,
-            max_retries=getattr(self, "llm_max_retries", 6),
-        )
-        text = (getattr(response.choices[0].message, "content", "") or "").strip()
-        ordered = self._parse_movie_ids(text, presentation)
-        self.stats.update(list(presentation), response)
-        return ordered
+        n = len(presentation)
+        best: List[str] = []
+        for attempt in range(1, 6):
+            suffix = "" if attempt == 1 else (
+                f"\n\nYour previous answer was incomplete. List all {n} movie IDs exactly once: "
+                + ", ".join(presentation)
+            )
+            response = robust_chat_completion(
+                self.client,
+                self.model,
+                ML_SYSTEM,
+                prompt + suffix,
+                max_retries=getattr(self, "llm_max_retries", 6),
+            )
+            text = (getattr(response.choices[0].message, "content", "") or "").strip()
+            self.stats.update(list(presentation), response)
+            ordered = self._extract_movie_ids(text, presentation)
+            if len(ordered) == n:
+                return ordered
+            if len(ordered) > len(best):
+                best = ordered
+        return best + [m for m in presentation if m not in best]
 
     def _parse_movie_ids(self, text: str, batch: Sequence[str]) -> List[str]:
+        ordered = self._extract_movie_ids(text, batch)
+        return ordered + [m for m in batch if m not in ordered]
+
+    def _extract_movie_ids(self, text: str, batch: Sequence[str]) -> List[str]:
+        """Movie ids in the order the reply lists them (first occurrence only)."""
         batch_set = set(batch)
         ordered: List[str] = []
-        for mid in batch:
-            if mid in ordered:
-                continue
-        # Scan the reply in order.
         tokens = text.replace("\n", ",").split(",")
         for tok in tokens:
             clean = tok.strip().strip("[]`\"' ")
@@ -109,8 +123,7 @@ class MovieLensPackingSorter(BatchedLLMSorter):
             for _, m in pos:
                 if m not in ordered:
                     ordered.append(m)
-        missing = [m for m in batch if m not in ordered]
-        return ordered + missing
+        return ordered
 
     def sort(self):
         # Same schedule as BatchedLLMSorter.sort, with the quiet linear extension.
