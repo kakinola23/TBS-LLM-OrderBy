@@ -3,6 +3,8 @@
 Source code and data for the paper *Efficient Semantic ORDER BY via Transitivity-Aware LLM Batch
 Sorting* (Akinkunle Akintayo Akinola, Arijit Khan).
 
+**Full version of the paper (with appendix):** [paper/TBS_full_version.pdf](paper/TBS_full_version.pdf)
+
 **Transitive Batched Sort (TBS)** is a physical operator for `LLM-ORDER BY`. It keeps a record of
 every preference the LLM has revealed. It then sends a listwise request only for items whose order
 is not already implied, directly or by transitivity. Listwise external merge sort instead re-asks
